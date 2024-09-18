@@ -6,10 +6,29 @@ import (
 	"log"
 	pb "thelastking/blog/pb"
 
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
+
+func connectWebSocket() {
+	url := "ws://localhost:8080/ws"
+	c, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		log.Fatal("dial:", err)
+	}
+	defer c.Close()
+
+	for {
+		_, message, err := c.ReadMessage()
+		if err != nil {
+			log.Println("read:", err)
+			return
+		}
+		log.Printf("Received: %s", message)
+	}
+}
 
 func main() {
 	cc, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -34,6 +53,12 @@ func main() {
 
 	// list blogs
 	listBlogs(c)
+
+	// Start WebSocket client
+	go connectWebSocket()
+
+	// Keep the main goroutine running
+	select {}
 }
 
 func createBlog(c pb.BlogServiceClient) {

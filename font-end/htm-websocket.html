@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog WebSocket Client</title>
+</head>
+<body>
+    <h1>Blog WebSocket Client</h1>
+    <div id="output"></div>
+
+    <script>
+        const socket = new WebSocket('ws://localhost:8080/ws');
+        const output = document.getElementById('output');
+
+        socket.onopen = function(e) {
+            console.log('Connected to WebSocket');
+            output.innerHTML += '<p>Connected to WebSocket</p>';
+        };
+
+        socket.onmessage = function(event) {
+            console.log('Message from server:', event.data);
+            const blog = JSON.parse(event.data);
+            output.innerHTML += `<p>Received blog: ${blog.title} by ${blog.authorId}</p>`;
+        };
+
+        socket.onclose = function(event) {
+            if (event.wasClean) {
+                console.log(`Connection closed cleanly, code=${event.code} reason=${event.reason}`);
+            } else {
+                console.log('Connection died');
+            }
+            output.innerHTML += '<p>Disconnected from WebSocket</p>';
+        };
+
+        socket.onerror = function(error) {
+            console.log(`WebSocket error: ${error.message}`);
+            output.innerHTML += `<p>WebSocket error: ${error.message}</p>`;
+        };
+    </script>
+</body>
+</html>

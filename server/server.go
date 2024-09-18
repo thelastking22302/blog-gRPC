@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 
 	pb "thelastking/blog/pb"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -21,6 +24,11 @@ import (
 )
 
 var collection *mongo.Collection
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all origins
+	},
+}
 
 type server struct {
 	pb.UnimplementedBlogServiceServer
@@ -188,6 +196,56 @@ func (s *server) ListBlog(req *pb.ListBlogRequest, stream pb.BlogService_ListBlo
 	return nil
 }
 
+func  handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer conn.Close()
+
+	// Watch for changes in the blogs collection
+	pipeline := mongo.Pipeline{bson.D{{Key: "$match", Value: bson.D{{Key: "operationType", Value: "insert"}}}}}
+	stream, err := collection.Watch(context.Background(), pipeline)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer stream.Close(context.Background())
+
+	for stream.Next(context.Background()) {
+		var changeEvent bson.M
+		if err := stream.Decode(&changeEvent); err != nil {
+			log.Println(err)
+			continue
+		}
+
+		fullDocument, ok := changeEvent["fullDocument"].(bson.M)
+		if !ok {
+			log.Println("Error: fullDocument not found or not a bson.M")
+			continue
+		}
+
+		blog := &pb.Blog{
+			Id:       fullDocument["_id"].(primitive.ObjectID).Hex(),
+			AuthorId: fullDocument["author_id"].(string),
+			Title:    fullDocument["title"].(string),
+			Content:  fullDocument["content"].(string),
+		}
+
+		blogJSON, err := json.Marshal(blog)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		if err := conn.WriteMessage(websocket.TextMessage, blogJSON); err != nil {
+			log.Println(err)
+			return
+		}
+	}
+}
+
 func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -220,6 +278,18 @@ func main() {
 			log.Fatal(err.Error())
 		}
 	}()
+
+	// Add WebSocket handler
+	http.HandleFunc("/ws", handleWebSocket)
+
+	// Start HTTP server for WebSocket
+	go func() {
+		log.Println("Starting WebSocket server on :8080")
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Fatalf("Failed to start WebSocket server: %v", err)
+		}
+	}()
+
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt)
 	<-ch
